@@ -1,0 +1,4 @@
+experiment,max_iter,max_leaf_nodes,learning_rate,l2_regularization,validation_MAE,validation_RMSE,validation_R2
+Experiment 1,100,15,0.1,0.0,412.552,535.698,0.99254
+Experiment 2,180,31,0.07,1.0,336.448,444.739,0.99486
+Experiment 3,240,15,0.05,5.0,393.604,513.896,0.99313
