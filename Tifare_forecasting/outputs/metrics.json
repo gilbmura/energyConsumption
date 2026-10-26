@@ -1,0 +1,59 @@
+{
+  "raw_rows": 145392,
+  "duplicate_timestamps": 0,
+  "imputed_records_excluded": 30,
+  "missing_hourly_timestamps": 0,
+  "unobserved_hours_including_imputed": 30,
+  "hourly_grid_rows": 145392,
+  "model_rows": 140154,
+  "first_raw_timestamp": "2002-01-01 01:00:00",
+  "last_raw_timestamp": "2018-08-03 00:00:00",
+  "start": "2002-01-08 01:00:00",
+  "end": "2018-08-03 00:00:00",
+  "train_rows": 98107,
+  "validation_rows": 21023,
+  "test_rows": 21024,
+  "train_end": "2013-09-03 19:00:00",
+  "validation_end": "2016-02-17 21:00:00",
+  "test_start": "2016-02-17 22:00:00",
+  "best_experiment": "Experiment 2",
+  "best_parameters": {
+    "max_iter": 180,
+    "max_leaf_nodes": 31,
+    "learning_rate": 0.07,
+    "l2_regularization": 1.0
+  },
+  "test_metrics": {
+    "MAE": 340.857,
+    "RMSE": 451.683,
+    "R2": 0.99516
+  },
+  "naive_lag1_test_metrics": {
+    "MAE": 1060.467,
+    "RMSE": 1360.356,
+    "R2": 0.9561
+  },
+  "naive_lag24_test_metrics": {
+    "MAE": 2214.594,
+    "RMSE": 3041.527,
+    "R2": 0.78054
+  },
+  "naive_lag168_test_metrics": {
+    "MAE": 3440.273,
+    "RMSE": 4748.829,
+    "R2": 0.46502
+  },
+  "features": [
+    "hour",
+    "day_of_week",
+    "month",
+    "day_of_year",
+    "is_weekend",
+    "lag_1",
+    "lag_24",
+    "lag_168",
+    "rolling_mean_24",
+    "rolling_mean_168"
+  ],
+  "notes": "One-step-ahead with observed earlier-hour values, not multi-step recursive prediction. Training uses shared pjme_clean.csv. Interpolated values marked was_imputed are masked to avoid information from future hours. Incomplete lag-history rows are excluded. Validation used for parameter selection and held-out test only for final evaluation."
+}
