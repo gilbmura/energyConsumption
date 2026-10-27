@@ -1,5 +1,5 @@
 """
-Interactive Terminal Database Explorer for Task 2 (MySQL/SQL & MongoDB)
+Offline SQLite CSV Explorer (not a MySQL or MongoDB connection)
 Author: Laura Karangwa (Member 3)
 Dataset: PJM East (PJME) Cleaned Multivariate Energy Consumption
 """
@@ -25,9 +25,9 @@ console = Console()
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_CLEAN = os.path.join(SCRIPT_DIR, "pjme_clean.csv")
+CSV_CLEAN = os.path.join(os.path.dirname(os.path.dirname(SCRIPT_DIR)), "pjme_clean.csv")
 CSV_RAW = os.path.join(SCRIPT_DIR, "PJME_hourly.csv")
-DB_FILE = os.path.join(SCRIPT_DIR, "pjme_database.db")
+DB_FILE = os.path.join(os.path.dirname(SCRIPT_DIR), "results", "csv_preview.db")
 
 CSV_PATH = CSV_CLEAN if os.path.exists(CSV_CLEAN) else CSV_RAW
 
@@ -281,7 +281,7 @@ def run_query_4(conn):
     console.print("[italic green]Finding: Classic U-shaped thermal demand curve. Demand spikes at both temperature extremes (<0°C heating and >25°C cooling).[/italic green]\n")
 
 def run_all(conn):
-    console.print(Panel("[bold green]RUNNING COMPLETE DATABASE AUDIT & DEMONSTRATION[/bold green]\nStudent: Laura Karangwa (Member 3)\nRelational Database: SQLite / MySQL Compatible\nDataset: PJM East (145,392 observations)", style="bold blue"))
+    console.print(Panel("[bold green]RUNNING COMPLETE DATABASE AUDIT & DEMONSTRATION[/bold green]\nStudent: Laura Karangwa (Member 3)\nPreview Database: SQLite only\nDataset: PJM East (145,392 observations)", style="bold blue"))
     show_table_summary(conn)
     preview_data_sources(conn)
     preview_time_dimensions(conn, 5)
@@ -302,7 +302,7 @@ def main():
         
     while True:
         console.print(Panel(
-            "[bold cyan]LAURA'S DATABASE EXPLORER (Task 2: MySQL & MongoDB)[/bold cyan]\n"
+            "[bold cyan]LAURA'S OFFLINE CSV EXPLORER (SQLite only)[/bold cyan]\n"
             "[1] Show Tables Summary & Row Counts\n"
             "[2] Preview 'data_sources' Table\n"
             "[3] Preview 'time_dimensions' Table\n"

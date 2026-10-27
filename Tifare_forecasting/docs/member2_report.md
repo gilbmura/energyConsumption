@@ -18,35 +18,35 @@ Three settings were tried for `max_iter`, `max_leaf_nodes`, `learning_rate` and 
 
 | Experiment | Iterations | Max leaf nodes | Learning rate | L2 regularization | Validation MAE (MW) | Validation RMSE (MW) | Validation R² |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 100 | 15 | 0.10 | 0 | 418.459 | 542.559 | 0.99234 |
-| **2, selected** | **180** | **31** | **0.07** | **1** | **337.133** | **445.934** | **0.99483** |
-| 3 | 240 | 15 | 0.05 | 5 | 396.951 | 518.941 | 0.99300 |
+| 1 | 100 | 15 | 0.10 | 0 | 412.552 | 535.698 | 0.99254 |
+| **2, selected** | **180** | **31** | **0.07** | **1** | **336.448** | **444.739** | **0.99486** |
+| 3 | 240 | 15 | 0.05 | 5 | 393.604 | 513.896 | 0.99313 |
 
 ## 4. Final held-out evaluation
 
 | Predictor | Test MAE (MW) | Test RMSE (MW) | Test R² |
 |---|---:|---:|---:|
-| **Selected boosting model** | **337.456** | **447.727** | **0.99524** |
+| **Selected boosting model** | **340.857** | **451.683** | **0.99516** |
 | Naive previous-hour demand | 1,060.467 | 1,360.356 | 0.95610 |
 | Naive previous-day demand | 2,214.594 | 3,041.527 | 0.78054 |
 | Naive previous-week demand | 3,440.273 | 4,748.829 | 0.46502 |
 
-**Interpretation.** On the withheld historical test interval, the selected model's forecast is about **337 MW away from the actual demand on average**, compared with around 1,060 MW for simply repeating the previous hour. The model reproduces short-term demand patterns more accurately than the three simple baselines on this specific interval. The **R² of 0.99524** indicates strong fit on these withheld hours. These values are **not** guarantees of performance for current demand or multi-hour forecasts.
+**Interpretation.** On the withheld historical test interval, the selected model's forecast is about **341 MW away from the actual demand on average**, compared with around 1,060 MW for simply repeating the previous hour. The model reproduces short-term demand patterns more accurately than the three simple baselines on this specific interval. The **R² of 0.99516** indicates strong fit on these withheld hours. These values are **not** guarantees of performance for current demand or multi-hour forecasts.
 
 **Figure:** Insert `outputs/forecast_chart.png` into the final PDF and cite it as "Actual versus forecast electricity demand for the final week in the test period". The graph is generated automatically by the training script and shows close tracking, with some deviations near rapid peaks and troughs.
 
 ## 5. Prediction script and integration
 
-The training script expects `pjme_clean.csv` at the root of the group repository, immediately above the `member2_forecasting` folder. The trained model, its ordered features, target field and hourly forecast horizon are saved to `models/pjme_forecast.joblib`. `scripts/predict.py` requests JSON through the standard Python HTTP client (`--api-url`) or uses local data to simulate an API (`--mock`). It validates the field names, timestamps and continuous hourly history. To make the **next-hour** forecast, it uses the latest 168 consecutive observed hours to calculate the same features used in model training, loads the saved model, and prints the target timestamp and predicted megawatts as JSON.
+The training script expects `pjme_clean.csv` at the root of the group repository, immediately above the `Tifare_forecasting` folder. The trained model, its ordered features, target field and hourly forecast horizon are saved to `models/pjme_forecast.joblib`. `scripts/predict.py` requests JSON through the standard Python HTTP client (`--api-url`) or uses local data to simulate an API (`--mock`). It validates the field names, timestamps and continuous hourly history. To make the **next-hour** forecast, it uses the latest 168 consecutive observed hours to calculate the same features used in model training, loads the saved model, and prints the target timestamp and predicted megawatts as JSON.
 
-**Working local demonstration:** `python scripts/predict.py --mock` outputs **32,450.41 MW** for **2018-08-03 01:00:00**, using historical readings through 2018-08-03 00:00:00.
+**Working local demonstration:** `python scripts/predict.py --mock` outputs **32,562.82 MW** for **2018-08-03 01:00:00**, using historical readings through 2018-08-03 00:00:00.
 
-**HTTP integration verification:** `python -m unittest discover -s tests -v` passes five tests, including a real HTTP GET request and JSON parsing from a local stub server, plus an exact feature-consistency test. An additional test verifies that interpolated readings flagged `was_imputed=True` are excluded. This verifies that the prediction client can consume an HTTP response. **It is not yet a test of Member 4's database-connected API**. When the group API is ready, replace the example URL with the real endpoint, run the client again, save the successful JSON response and add a screenshot/log to the shared PDF report.
+**HTTP integration verification:** The combined suite now sends real HTTP requests to Gilbert's FastAPI service, fetches the latest 200 records through both backend routes, and runs the committed model. Both produce 32,562.82 MW for 2018-08-03 01:00:00, matching the same CSV history. The same checks have now passed against real MySQL 8.4.11 and MongoDB 8.0.34. The full dataset was imported into both stores and matched the CSV record for record. The command-line forecast client also succeeded against each real API backend; executed evidence is saved in `api/evidence/forecast-full-mysql.json` and `api/evidence/forecast-full-mongo.json`.
 
 ## 6. Limitations and responsibilities
 
 1. The shared cleaned file includes demand (`PJME_MW`) and temperature (`temperature_c`). The source, location and time alignment of temperature have not been verified. The forecasting model therefore uses historical demand and calendar features only, not temperature; future temperature must be available at prediction time before it can be a valid predictor.
 2. Timezone-naive timestamps involve daylight-saving ambiguities. The shared data is hourly after cleaning, but the model masks estimated missing-hour values and excludes nearby histories rather than using information from later timestamps.
 3. Historical test metrics evaluate **rolling one-step-ahead** forecasting with previously observed actual demand. They do not evaluate a multi-step forecast into an unobserved future period.
-4. The real API connection remains a group integration step with Member 4.
+4. Live persistence and forecasting have been verified on the local MySQL/MongoDB containers. Other environments should repeat the live suite and preserve the same schema, versions and timestamp conventions.
 5. Member 2 should be able to explain the model choice, feature shifts, model selection procedure, evaluation metrics, limitations and the HTTP contract, and record their real GitHub development contributions.

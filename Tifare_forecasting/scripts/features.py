@@ -5,6 +5,7 @@ naive local timestamps, so daylight-saving ambiguity remains a limitation.
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 FEATURES = [
@@ -28,16 +29,27 @@ def to_hourly_series(data: pd.DataFrame) -> pd.Series:
     included = ['Datetime', 'PJME_MW'] + (['was_imputed'] if 'was_imputed' in data.columns else [])
     df = data[included].copy()
     if 'was_imputed' in df.columns:
-        imputed = df['was_imputed'].astype(str).str.strip().str.lower().isin(['true', '1', 'yes'])
+        flags = df['was_imputed'].astype(str).str.strip().str.lower()
+        if not flags.isin(['true', 'false', '1', '0', 'yes', 'no']).all():
+            raise ValueError('Invalid was_imputed flag')
+        imputed = flags.isin(['true', '1', 'yes'])
         df.loc[imputed, 'PJME_MW'] = float('nan')
     df['Datetime'] = pd.to_datetime(df['Datetime'], errors='raise')
     df['PJME_MW'] = pd.to_numeric(df['PJME_MW'], errors='raise')
-    df = df.dropna(subset=['Datetime', 'PJME_MW'])
-    if df.empty:
+    if df.empty or not df['PJME_MW'].notna().any():
         raise ValueError('The input contains no valid electricity observations')
     if df['Datetime'].dt.tz is not None:
         raise ValueError('Expected timezone-naive dataset timestamps; coordinate timezone handling with the database team')
-    return df.groupby('Datetime')['PJME_MW'].mean().sort_index().asfreq('h')
+    if df['Datetime'].isna().any() or df['Datetime'].duplicated().any():
+        raise ValueError('Timestamps must be present and unique')
+    if not df['Datetime'].eq(df['Datetime'].dt.floor('h')).all():
+        raise ValueError('Timestamps must be on hourly boundaries')
+    observed = df['PJME_MW'].dropna()
+    if not np.isfinite(observed).all() or (observed < 0).any():
+        raise ValueError('Demand must be finite and nonnegative')
+    # Preserve missing/imputed values at BOTH ends so inference never silently
+    # shifts backwards to an earlier last-observed hour.
+    return df.set_index('Datetime')['PJME_MW'].sort_index().asfreq('h')
 
 
 def make_feature_frame(series: pd.Series) -> pd.DataFrame:
@@ -66,7 +78,7 @@ def make_next_features(records: list[dict]) -> tuple[pd.Timestamp, dict]:
     """Build one next-hour feature row from >=168 consecutive observations.
 
     Uses exactly the same feature-generation function as training.
-    Records may be unordered. Duplicate timestamps are averaged.
+    Records may be unordered. Duplicate timestamps are rejected.
     """
     series = to_hourly_series(pd.DataFrame(records))
     if len(series) < HISTORY_HOURS or series.iloc[-HISTORY_HOURS:].isna().any():

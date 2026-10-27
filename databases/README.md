@@ -1,134 +1,57 @@
-# Task 2: Relational (MySQL) and Non-Relational (MongoDB) Database Design & Implementation
+# Laura Karangwa — Task 2 databases
 
-**Student / Member 3:** Laura Karangwa  
-**Group Role:** Database Architect & Engineer (MySQL & MongoDB)  
-**Dataset:** PJM East (PJME) Hourly Electricity Consumption (Kaggle / Rob Mulla)  
-**Total Dataset Observations:** 145,362 hourly readings (2002-01-01 to 2018-08-03)  
+The canonical design uses MySQL database `pjme_energy` with three related tables, and MongoDB database `pjme_energy` with collection `energy_observations`. The shared cleaned CSV has 145,392 hourly records, including 30 imputation flags.
 
----
+The API now uses this schema directly. See the [root setup guide](../README.md) and [shared integration contract](../api/INTEGRATION.md).
 
-## 1. Executive Summary & Deliverables Overview
+## Source files
 
-This directory provides the complete implementation for **Task 2 (Design Databases: SQL and MongoDB)** of the Time Series Group Assignment:
+- `mysql/schema.sql`: the authoritative three-table DDL and initial data-source metadata.
+- `mysql/queries.sql`: four analytical SQL queries.
+- `mongodb/init.js`: MongoDB indexes for fresh local containers.
+- `mongodb/collection_design.md`: active document format and datetime semantics.
+- `mongodb/queries.js`: the analytical queries for mongosh.
+- `mongodb/sample_documents.json`: JSON examples from the cleaned CSV, not directly inserted BSON documents.
+- `docs/erd.md` and `docs/erd_diagram.png`: relational design.
+- `config.py`, `records.py`, `schema.py`: shared connections, validation and provisioning helpers.
+- `scripts/load_csv_to_databases.py`: the real database batch loader.
+- `scripts/execute_queries_and_export_results.py`: the real server query exporter.
+- `scripts/preview_queries_from_csv.py`: optional SQLite/pandas preview, clearly separate from real evidence.
 
-1. **Relational Schema (MySQL)**: 3-table normalized schema in 3NF ([`mysql/schema.sql`](mysql/schema.sql)) with referential integrity, foreign key cascades, and temporal checks.
-2. **Professional ERD Diagram**: Complete visual ERD ([`docs/erd_diagram.png`](docs/erd_diagram.png)) and architectural documentation ([`docs/erd.md`](docs/erd.md)).
-3. **Non-Relational Schema (MongoDB)**: Hybrid Time-Series Document Collection Design ([`mongodb/collection_design.md`](mongodb/collection_design.md)) with sample documents ([`mongodb/sample_documents.json`](mongodb/sample_documents.json)) and compound indexes.
-4. **Analytical Queries & Real Execution Evidence**: 3 comprehensive queries per database ([`mysql/queries.sql`](mysql/queries.sql), [`mongodb/queries.js`](mongodb/queries.js)) with full outputs and interpretations in [`results/query_execution_results.md`](results/query_execution_results.md).
-5. **Team Integration Contract**: Standardized data and endpoint contract for Member 4 (API Endpoints) and Member 2 (Prediction Script) in [`docs/api_contract.md`](docs/api_contract.md).
+## Database design
 
----
+`data_sources` stores provenance. `time_dimensions` stores one row per timestamp with hour, weekday, month and weekend fields. `energy_readings` stores demand, temperature, imputation status, and foreign keys to both dimensions.
 
-## 2. Directory Structure
+`temperature_c` is required by the SQL schema. The loader/API enforce that contract. Timestamp uniqueness is enforced in both stores. The API returns the same public JSON fields for either backend.
 
-```text
-laura_task3_pjm_databases/
-├── README.md                              <- Main technical documentation & reproduction guide
-├── mysql/
-│   ├── schema.sql                         <- DDL scripts (3 tables: data_sources, time_dimensions, energy_readings)
-│   └── queries.sql                        <- 3 analytical SQL queries
-├── mongodb/
-│   ├── collection_design.md               <- Collection schema, indexing strategy, & design rationale
-│   ├── queries.js                         <- 3 analytical MongoDB aggregation & find queries
-│   └── sample_documents.json              <- Real sample documents with base & engineered features
-├── docs/
-│   ├── erd.md                             <- ERD explanation and architectural justification
-│   ├── erd_diagram.png                    <- High-resolution rendered ERD visual diagram
-│   ├── api_contract.md                    <- Shared JSON payload contract for Members 2 & 4
-│   └── evidence_checklist.md             <- Submission audit checklist
-├── scripts/
-│   ├── execute_queries_and_export_results.py <- Automated query execution & validation runner
-│   ├── render_erd_diagram.py             <- Generates the professional ERD PNG graphic
-│   └── load_csv_to_databases.py           <- Batch loader for live MySQL and MongoDB instances
-└── results/
-    └── query_execution_results.md         <- Real query output tables, interpretations, and cross-DB check
+MongoDB stores observations and calendar fields together. Historical lag snapshots are not maintained by mutable CRUD operations and are not used by forecasting. The model recomputes them from returned observations.
+
+## Run from the repository root
+
+Install the root requirements and configure `api/.env`. Docker is optional; native database servers can be used by setting their actual host, port and credentials.
+
+```powershell
+& api/.venv/Scripts/python.exe -m databases.scripts.load_csv_to_databases --validate-only
+& api/.venv/Scripts/python.exe -m databases.scripts.load_csv_to_databases
+& api/.venv/Scripts/python.exe -m databases.scripts.execute_queries_and_export_results
 ```
 
----
+The loader validates the complete file before writing. It initializes Laura's schema, preserves all four fields, and performs upserts in batches. A failure can leave earlier batches committed; rerunning repairs the selected rows. Backends commit independently. Use `--backend mysql`, `--backend mongo`, or `--limit 200 --tail` when needed.
 
-## 3. Relational Schema Architecture (MySQL)
+Database names and connection parameters come from `config.py`; the old `MYSQL_URL` loader setting is no longer used. On an existing incompatible two-column schema, the loader stops and asks for an explicit migration rather than dropping data.
 
-The relational schema implements a normalized star-fact design adhering to **Third Normal Form (3NF)**:
+## Evidence provenance
 
-| Table | Type | Role & Description | Key Constraints |
-| :--- | :--- | :--- | :--- |
-| **`data_sources`** | Dimension | Ingestion metadata, dataset source URL, and provider. | `source_id` (PK, Auto-inc), Unique `(dataset_name, provider)` |
-| **`time_dimensions`** | Dimension | Pre-calculated calendar coordinates (`hour`, `day_of_week`, `month`, `is_weekend`). | `Datetime` (PK), Range Checks on hour/month |
-| **`energy_readings`** | Fact Table | Hourly continuous demand (`PJME_MW`), timestamp FK, and source FK. | `reading_id` (PK), `Datetime` (FK, Unique), `source_id` (FK) |
+`results/query_execution_results.md` is a historical preview generated with SQLite and pandas. It is now labeled accordingly; it is not proof that MySQL and MongoDB were run.
 
-### Visual ERD
-Refer to [`docs/erd_diagram.png`](docs/erd_diagram.png) for the visual representation.
+The new exporter executes all four SQL queries and their PyMongo equivalents on actual servers. It records server versions, queries, responses and counts in `results/live_query_results.json`, and writes the file only after both servers succeed. This has now run successfully on MySQL 8.4.11 and MongoDB 8.0.34, each containing 145,392 records. Full normalized record hashes also match the source CSV.
 
----
+For offline exploration only:
 
-## 4. MongoDB Collection Architecture
-
-- **Database:** `pjme_energy`
-- **Collection:** `energy_observations`
-- **Pattern:** Hybrid Time-Series Document Model. Denormalizes hourly demand with calendar coordinates and prior sequential lag features (`lag_1`, `lag_24`, `lag_168`, `rolling_mean_24`, `rolling_mean_168`).
-- **Indexes:**
-  - `{ Datetime: 1 }` (Unique): Enforces strict temporal ordering and single-record uniqueness.
-  - `{ Datetime: 1, PJME_MW: 1 }`: Covered query index for date range lookups.
-  - `{ hour: 1 }`: Accelerates diurnal profile aggregations.
-
----
-
-## 5. Analytical Queries & Results Summary
-
-Detailed tables, execution logs, and interpretations are documented in [`results/query_execution_results.md`](results/query_execution_results.md).
-
-### Query 1: Top 10 Peak Demand Days
-- **Objective:** Detect historic grid stress and peak capacity requirements.
-- **Top Date:** **2006-08-02** with an average demand of **52,229.83 MW** and single-hour peak of **62,009.00 MW**.
-- **Results Match:** Identical across MySQL and MongoDB to 2 decimal places.
-
-### Query 2: Diurnal Hourly Demand Profile
-- **Objective:** Analyze the 24-hour load curve for off-peak base load vs. evening peak ramp-up.
-- **Off-Peak Minimum:** Hour **04:00** (average **25,414.92 MW**).
-- **Evening Peak:** Hours **18:00 - 19:00** (average **36,426.63 MW**).
-
-### Query 3: Date-Range Slicing (Jan 1 - Jan 8, 2018)
-- **Objective:** Rapidly extract an exact chronological window for API delivery and model inference.
-- **Returned Records:** Exactly **168 observations** (7 days × 24 hours).
-
----
-
-## 6. How to Reproduce All Results
-
-1. **Prerequisites**: Python 3.9+ with `pandas` and `matplotlib` installed.
-2. **Execute Queries & Generate Evidence Report**:
-   ```bash
-   python scripts/execute_queries_and_export_results.py
-   ```
-3. **Re-render ERD Visual Diagram**:
-   ```bash
-   python scripts/render_erd_diagram.py
-   ```
-4. **Inspect Generated Deliverables**:
-   - Query execution report: [`results/query_execution_results.md`](results/query_execution_results.md)
-   - Real sample documents: [`mongodb/sample_documents.json`](mongodb/sample_documents.json)
-   - ERD graphic: [`docs/erd_diagram.png`](docs/erd_diagram.png)
-
----
-
-## 7. Recommended 4 Git Commits for Member 3
-
-To satisfy the rubric criterion for individual technical contributions (minimum 4 meaningful commits):
-
-```bash
-# Commit 1
-git add mysql/schema.sql docs/erd.md docs/erd_diagram.png
-git commit -m "feat(mysql): implement 3NF relational schema and architectural ERD"
-
-# Commit 2
-git add mongodb/collection_design.md mongodb/sample_documents.json
-git commit -m "feat(mongodb): design hybrid time-series collection and sample document schema"
-
-# Commit 3
-git add mysql/queries.sql mongodb/queries.js scripts/execute_queries_and_export_results.py
-git commit -m "feat(db-queries): implement analytical SQL queries and MongoDB aggregation pipelines"
-
-# Commit 4
-git add results/query_execution_results.md docs/api_contract.md README.md
-git commit -m "docs(task2): document real query execution evidence and team API integration contract"
+```powershell
+& api/.venv/Scripts/python.exe -m databases.scripts.preview_queries_from_csv
 ```
+
+This writes a separate `results/csv_preview_results.md`. The optional interactive `explore_databases.py` tool uses SQLite, not either live database, and additionally requires `rich`.
+
+The source and time alignment of temperature still need team documentation; numeric validation does not establish provenance.

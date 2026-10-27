@@ -1,90 +1,158 @@
-"""Load PJME_hourly.csv to MySQL and MongoDB. Configure env vars first."""
-import os
+"""Load the shared cleaned CSV into Laura's real MySQL/MongoDB schema.
+
+Run from the repository root: python -m databases.scripts.load_csv_to_databases
+--validate-only requires no database. Writes are upserts in bounded batches.
+"""
+
+import argparse
+import csv
+from itertools import islice
 from pathlib import Path
-import pandas as pd
-from sqlalchemy import create_engine, text
+
+import pymysql
 from pymongo import MongoClient, UpdateOne
 
-CSV = Path(os.getenv('PJME_CSV', 'PJME_hourly.csv'))
-MYSQL_URL = os.getenv('MYSQL_URL')  # e.g. mysql+pymysql://user:pass@localhost:3306/pjme_energy
-MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017')
-BATCH = 1000
+from databases.config import REPO_ROOT, Settings
+from databases.records import Observation
+from databases.schema import (
+    DIMENSION_SQL,
+    LEGACY_FEATURES,
+    dimension_values,
+    initialize_mongo,
+    initialize_mysql,
+    observation_document,
+    source_id,
+)
 
-if not MYSQL_URL:
-    raise RuntimeError('Set MYSQL_URL to a connection URL ending in /pjme_energy')
-if not CSV.exists():
-    raise FileNotFoundError(f'Cannot find {CSV}; download PJME_hourly.csv first.')
 
-df = pd.read_csv(CSV)
-if not {'Datetime', 'PJME_MW'}.issubset(df.columns):
-    raise ValueError(f'Expected Datetime and PJME_MW; found {list(df.columns)}')
-df = df[['Datetime', 'PJME_MW']].copy()
-df['Datetime'] = pd.to_datetime(df['Datetime'], errors='coerce')
-df['PJME_MW'] = pd.to_numeric(df['PJME_MW'], errors='coerce')
-df = df.dropna(subset=['Datetime', 'PJME_MW']).drop_duplicates('Datetime').sort_values('Datetime')
-df['hour'] = df.Datetime.dt.hour
-df['day_of_week'] = df.Datetime.dt.dayofweek  # Monday=0
-df['month'] = df.Datetime.dt.month
-df['is_weekend'] = df.day_of_week >= 5
-for col, shift in [('lag_1', 1), ('lag_24', 24), ('lag_168', 168)]:
-    df[col] = df.PJME_MW.shift(shift)
-df['rolling_mean_24'] = df.PJME_MW.shift(1).rolling(24).mean()
-df['rolling_mean_168'] = df.PJME_MW.shift(1).rolling(168).mean()
+def read_records(path: Path, limit: int | None = None, tail: bool = False) -> list[Observation]:
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be positive")
+    records = []
+    seen = set()
+    with path.open(newline="", encoding="utf-8-sig") as source:
+        reader = csv.DictReader(source)
+        if not set(Observation.model_fields) <= set(reader.fieldnames or []):
+            raise ValueError("CSV must contain Datetime, PJME_MW, temperature_c and was_imputed")
+        for line, row in enumerate(reader, start=2):
+            try:
+                flag = row["was_imputed"].strip().lower()
+                if flag not in {"true", "false"}:
+                    raise ValueError("was_imputed must be True or False")
+                record = Observation(
+                    Datetime=row["Datetime"],
+                    PJME_MW=float(row["PJME_MW"]),
+                    temperature_c=float(row["temperature_c"]),
+                    was_imputed=flag == "true",
+                )
+                if record.Datetime in seen:
+                    raise ValueError(f"Duplicate timestamp: {record.Datetime}")
+                seen.add(record.Datetime)
+                records.append(record)
+            except (ValueError, KeyError) as exc:
+                raise ValueError(f"Invalid CSV record on line {line}: {exc}") from exc
+    # Validate the entire source before touching either database.
+    records.sort(key=lambda row: row.Datetime)
+    return records if limit is None else (records[-limit:] if tail else records[:limit])
 
-engine = create_engine(MYSQL_URL, pool_pre_ping=True)
-with engine.begin() as c:
-    c.execute(text('''CREATE TABLE IF NOT EXISTS data_sources (
-      source_id INT AUTO_INCREMENT PRIMARY KEY, dataset_name VARCHAR(150) NOT NULL,
-      provider VARCHAR(150) NOT NULL, source_url VARCHAR(500), description TEXT,
-      UNIQUE KEY uq_dataset_provider (dataset_name, provider))'''))
-    c.execute(text('''CREATE TABLE IF NOT EXISTS time_dimensions (
-      Datetime DATETIME PRIMARY KEY, hour TINYINT UNSIGNED NOT NULL,
-      day_of_week TINYINT UNSIGNED NOT NULL, month TINYINT UNSIGNED NOT NULL,
-      is_weekend BOOLEAN NOT NULL)'''))
-    c.execute(text('''CREATE TABLE IF NOT EXISTS energy_readings (
-      reading_id BIGINT AUTO_INCREMENT PRIMARY KEY, Datetime DATETIME NOT NULL UNIQUE,
-      PJME_MW DOUBLE NOT NULL, source_id INT NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (Datetime) REFERENCES time_dimensions(Datetime) ON DELETE CASCADE,
-      FOREIGN KEY (source_id) REFERENCES data_sources(source_id), INDEX idx_readings_demand (PJME_MW))'''))
-    c.execute(text('''INSERT INTO data_sources(dataset_name,provider,source_url,description)
-      VALUES(:n,:p,:u,:d) ON DUPLICATE KEY UPDATE source_url=VALUES(source_url),description=VALUES(description)'''),
-      {'n':'Hourly Energy Consumption - PJME','p':'Kaggle collection by Rob Mulla',
-       'u':'https://www.kaggle.com/datasets/robikscube/hourly-energy-consumption',
-       'd':'Hourly PJM East demand; original fields Datetime and PJME_MW.'})
-    sid = c.execute(text('SELECT source_id FROM data_sources WHERE dataset_name=:n AND provider=:p'),
-      {'n':'Hourly Energy Consumption - PJME','p':'Kaggle collection by Rob Mulla'}).scalar_one()
-    for start in range(0, len(df), BATCH):
-        part = df.iloc[start:start+BATCH]
-        dims = [{'Datetime':r.Datetime.to_pydatetime(),'hour':int(r.hour),'day_of_week':int(r.day_of_week),
-                 'month':int(r.month),'is_weekend':bool(r.is_weekend)} for r in part.itertuples()]
-        c.execute(text('''INSERT INTO time_dimensions(Datetime,hour,day_of_week,month,is_weekend)
-          VALUES(:Datetime,:hour,:day_of_week,:month,:is_weekend)
-          ON DUPLICATE KEY UPDATE hour=VALUES(hour),day_of_week=VALUES(day_of_week),month=VALUES(month),is_weekend=VALUES(is_weekend)'''), dims)
-        vals = [{'Datetime':r.Datetime.to_pydatetime(),'PJME_MW':float(r.PJME_MW),'source_id':int(sid)} for r in part.itertuples()]
-        c.execute(text('''INSERT INTO energy_readings(Datetime,PJME_MW,source_id)
-          VALUES(:Datetime,:PJME_MW,:source_id) ON DUPLICATE KEY UPDATE PJME_MW=VALUES(PJME_MW),source_id=VALUES(source_id)'''), vals)
 
-client = MongoClient(MONGO_URI)
-coll = client['pjme_energy']['energy_observations']
-coll.create_index('Datetime', unique=True)
-coll.create_index([('Datetime',1),('PJME_MW',1)])
-coll.create_index('hour')
-for start in range(0, len(df), BATCH):
-    part = df.iloc[start:start+BATCH]
-    ops = []
-    for r in part.itertuples():
-        doc = {'Datetime':r.Datetime.to_pydatetime(),'PJME_MW':float(r.PJME_MW),'hour':int(r.hour),
-               'day_of_week':int(r.day_of_week),'month':int(r.month),'is_weekend':bool(r.is_weekend),
-               'source':'PJME_hourly'}
-        for f in ['lag_1','lag_24','lag_168','rolling_mean_24','rolling_mean_168']:
-            v = getattr(r, f)
-            doc[f] = None if pd.isna(v) else float(v)
-        ops.append(UpdateOne({'Datetime':doc['Datetime']},{'$set':doc},upsert=True))
-    if ops:
-        coll.bulk_write(ops, ordered=False)
-with engine.connect() as c:
-    print('MySQL energy_readings:', c.execute(text('SELECT COUNT(*) FROM energy_readings')).scalar_one())
-    print('MySQL time_dimensions:', c.execute(text('SELECT COUNT(*) FROM time_dimensions')).scalar_one())
-print('MongoDB energy_observations:', coll.count_documents({}))
-print('Loader finished. Execute the query files and save actual results/screenshots.')
+def batches(records, size=1000):
+    iterator = iter(records)
+    while part := list(islice(iterator, size)):
+        yield part
+
+
+def load_mysql(records, settings):
+    connection = pymysql.connect(
+        host=settings.mysql_host,
+        port=settings.mysql_port,
+        user=settings.mysql_user,
+        password=settings.mysql_password,
+        cursorclass=pymysql.cursors.DictCursor,
+        connect_timeout=5,
+        autocommit=False,
+    )
+    try:
+        initialize_mysql(connection, settings.mysql_database)
+        for part in batches(records):
+            try:
+                with connection.cursor() as cursor:
+                    sid = source_id(cursor, settings.mysql_source_id)
+                    cursor.executemany(
+                        DIMENSION_SQL, [dimension_values(row.Datetime) for row in part]
+                    )
+                    cursor.executemany(
+                        "INSERT INTO energy_readings "
+                        "(Datetime, PJME_MW, temperature_c, was_imputed, source_id) "
+                        "VALUES (%s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE "
+                        "PJME_MW=VALUES(PJME_MW), temperature_c=VALUES(temperature_c), "
+                        "was_imputed=VALUES(was_imputed), source_id=VALUES(source_id)",
+                        [
+                            (
+                                row.Datetime,
+                                row.PJME_MW,
+                                row.temperature_c,
+                                row.was_imputed,
+                                sid,
+                            )
+                            for row in part
+                        ],
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+    finally:
+        connection.close()
+
+
+def load_mongo(records, settings):
+    with MongoClient(settings.mongo_uri, serverSelectionTimeoutMS=5000) as client:
+        collection = client[settings.mongo_database][settings.mongo_collection]
+        initialize_mongo(collection)
+        for part in batches(records):
+            collection.bulk_write(
+                [
+                    UpdateOne(
+                        {"Datetime": row.Datetime},
+                        {
+                            "$set": observation_document(row.model_dump()),
+                            "$unset": {field: "" for field in LEGACY_FEATURES},
+                        },
+                        upsert=True,
+                    )
+                    for row in part
+                ],
+                ordered=True,
+            )
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--csv", type=Path, default=REPO_ROOT / "pjme_clean.csv")
+    parser.add_argument("--backend", choices=["mysql", "mongo", "both"], default="both")
+    parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--tail", action="store_true", help="Select the most recent rows with --limit"
+    )
+    parser.add_argument("--validate-only", action="store_true")
+    args = parser.parse_args()
+    records = read_records(args.csv, args.limit, args.tail)
+    if not records:
+        raise ValueError("CSV has no data records")
+    print(
+        f"Validated source; selected {len(records)} records: "
+        f"{records[0].Datetime} through {records[-1].Datetime}"
+    )
+    if args.validate_only:
+        return
+    settings = Settings()
+    for backend, loader in (("mysql", load_mysql), ("mongo", load_mongo)):
+        if args.backend in {backend, "both"}:
+            loader(records, settings)
+            print(f"{backend}: upserted {len(records)} records")
+    print("Finished. Each backend commits independently; rerun after a partial failure.")
+
+
+if __name__ == "__main__":
+    main()

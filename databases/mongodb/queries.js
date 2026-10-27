@@ -1,9 +1,5 @@
 // Run in mongosh after: use pjme_energy
 const observations = db.energy_observations;
-observations.createIndex({Datetime: 1}, {unique: true});
-observations.createIndex({Datetime: 1, PJME_MW: 1});
-observations.createIndex({hour: 1});
-observations.createIndex({temperature_c: 1});
 
 // 1. Top ten dates by average electricity demand with weather summary
 observations.aggregate([

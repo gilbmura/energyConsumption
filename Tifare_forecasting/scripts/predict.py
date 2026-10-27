@@ -11,7 +11,10 @@ from urllib.request import urlopen
 
 import joblib
 import pandas as pd
-from features import make_next_features, to_hourly_series
+try:
+    from .features import make_next_features
+except ImportError:  # Direct script execution remains supported.
+    from features import make_next_features
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,20 +22,20 @@ ROOT = Path(__file__).resolve().parents[1]
 def get_records(url=None, mock=False):
     if mock:
         raw = pd.read_csv(ROOT.parent / 'pjme_clean.csv')
-        series = to_hourly_series(raw)
-        # For testing only; simulates 200 records supplied by an API.
-        return [
-            {'Datetime': str(timestamp), 'PJME_MW': float(value)}
-            for timestamp, value in series.tail(200).items()
-        ]
+        raw['Datetime'] = pd.to_datetime(raw['Datetime'], errors='raise')
+        raw = raw.sort_values('Datetime').tail(200).copy()
+        raw['Datetime'] = raw['Datetime'].astype(str)
+        return raw[['Datetime', 'PJME_MW', 'was_imputed']].to_dict(orient='records')
     if not url:
         raise ValueError('Supply --api-url or --mock')
     with urlopen(url, timeout=20) as response:
         payload = json.load(response)
     if isinstance(payload, dict):
-        payload = payload.get('records', payload.get('data'))
+        if payload.get('has_more'):
+            raise ValueError('Use /mysql/records/recent or /mongo/records/recent for complete recent history')
+        payload = payload.get('records', payload.get('items', payload.get('data')))
     if not isinstance(payload, list):
-        raise ValueError('API must return a list or an object containing a records/data list')
+        raise ValueError('API must return a list or an object containing a records/items/data list')
     return payload
 
 

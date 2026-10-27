@@ -1,3 +1,5 @@
+> Historical offline preview: the original generator executed SQL in SQLite and MongoDB equivalents in pandas. These results are NOT proof of live MySQL/MongoDB execution. The live-query exporter has now run successfully; see `live_query_results.json` for actual server evidence. This older preview remains separate.
+
 # Task 2: Database Query Execution & Results Evidence (Multivariate Dataset)
 **Student / Member 3:** Laura Karangwa  
 **Dataset:** PJM East (PJME) Cleaned Hourly Electricity Consumption with Temperature & Imputation Audit  
