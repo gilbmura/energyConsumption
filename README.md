@@ -2,7 +2,7 @@
 
 Group assignment *Working with Time Series Data*. The project forecasts hourly electricity demand (`PJME_MW`) for the PJM East region from historical readings, calendar information and temperature.
 
-> This README covers **Member 1's part (Tasks 1A and 1B)**: data understanding, preprocessing, feature engineering and exploratory analysis. Teammates add their own sections for modelling, databases, API and the prediction script.
+> This README covers **David's part (Tasks 1A and 1B)**: data understanding, preprocessing, feature engineering and exploratory analysis. Teammates add their own sections for modelling, databases, API and the prediction script.
 
 ## Team
 
