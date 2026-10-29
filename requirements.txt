@@ -1,6 +1,9 @@
-pandas>=2.2
-numpy>=1.26
-matplotlib>=3.8
+-r api/requirements-dev.txt
+
+# Dependencies for EDA and preprocessing notebooks
+pandas>=2.2,<3
+numpy>=1.26,<3
+matplotlib>=3.8,<4
 seaborn>=0.13
 scipy>=1.11
 jupyter>=1.0
