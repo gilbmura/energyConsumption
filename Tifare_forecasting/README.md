@@ -10,7 +10,7 @@
 - **Task 4, independent portion**: fetch a JSON time series from an HTTP API (or mock local historical readings), use exactly the same feature-engineering method as during training, load the saved model and produce a next-hour forecast.
 - Automated checks, including a test that fetches records over HTTP from a local test server.
 
-> **Integration status:** The actual FastAPI recent-history endpoints have now been tested over localhost HTTP against real MySQL and MongoDB with the committed model. Both return a forecast of 32,562.82 MW for 2018-08-03 01:00:00 from the full imported dataset. See the root README for the integrated setup.
+> **Integration status:** The actual FastAPI recent-history endpoints have now been tested over localhost HTTP against real MySQL and MongoDB with the committed model. Using history from either backend, the forecasting client produced 32,562.82 MW for 2018-08-03 01:00:00 from the full imported dataset. See the [root README](../README.md) for setup and the [integration guide](../api/INTEGRATION.md) for the complete flow: root CSV -> database loader -> MySQL/MongoDB -> API recent history -> forecasting client.
 
 ## Folder guide
 
@@ -49,7 +49,7 @@ The training script reads the **shared cleaned dataset in the parent repository 
 
 ## Model and validation design
 
-The shared `pjme_clean.csv` has **145,392 rows**, no duplicate timestamps and a continuous hourly grid. It includes `Datetime`, `PJME_MW`, `was_imputed` and `temperature_c`. The 30 records with `was_imputed=True` were estimated using interpolation and **are excluded from model training inputs and targets** to prevent future-data leakage. Rows requiring those readings in the prior 168 hours are also excluded, leaving **140,154 supervised rows**. The `temperature_c` column is retained in the dataset for team analysis but is not a model predictor until its original source and prediction-time availability are established.
+The shared `pjme_clean.csv` has **145,392 rows**, no duplicate timestamps and a continuous hourly grid. It includes `Datetime`, `PJME_MW`, `was_imputed` and `temperature_c`. The 30 records with `was_imputed=True` were estimated using interpolation and **are excluded from model training inputs and targets** to prevent future-data leakage. Rows requiring those readings in the prior 168 hours are also excluded, leaving **140,154 supervised rows**. The `temperature_c` column comes from the Open-Meteo Historical Archive for Philadelphia, as documented in the [root README](../README.md#dataset-and-sources). It is retained for analysis but is not a model predictor because weather-to-demand timestamp alignment and prediction-time availability still require confirmation.
 
 Each labeled row for timestamp `t` uses only observations before `t`:
 
@@ -69,9 +69,9 @@ Final held-out test results for the selected model: **MAE 340.857 MW, RMSE 451.6
 
 **Evaluation interpretation:** These metrics are from repeated **one-hour-ahead** forecasts, each using *actually observed* previous demand readings. They are **not** a simulation of predicting many future hours without intervening observed readings, and are **not** claimed to show performance on new 2026 data.
 
-## Integration contract for Member 4
+## Integrated API handoff
 
-Provide an HTTP **GET** route that returns the **most recent 168 consecutive hourly observations**, preferably 200 for a buffer. Each object must use the **exact case-sensitive** keys `Datetime` and `PJME_MW`. Include `was_imputed` (boolean) where possible to ensure interpolated records are rejected for forecasting:
+The implemented **GET** routes `/mysql/records/recent?limit=200` and `/mongo/records/recent?limit=200` return up to the latest 200 observations in chronological order. Both include the **case-sensitive** keys `Datetime`, `PJME_MW`, `was_imputed`, `temperature_c` and `id`. The client requires at least **168 consecutive non-imputed hourly observations** ending at the latest timestamp. This abbreviated example shows the fields used for forecasting:
 
 ```json
 {
@@ -82,15 +82,16 @@ Provide an HTTP **GET** route that returns the **most recent 168 consecutive hou
 }
 ```
 
-The short example shows the JSON **shape only**; it does not contain enough history to forecast. The `was_imputed` field matters: when it is `true`, the model refuses to use that estimated demand value as if it had been observed. Member 4 should expose this flag. A plain JSON array is also accepted. Records may be ordered or unordered. The script sorts timestamps and validates that the latest 168 hours have no gaps. All timestamps should use the same **naive local time convention** as the original dataset. Agree on a consistent convention with the group before deploying.
+The short example shows the JSON **shape only**; it does not contain enough history to forecast. The `was_imputed` field matters: when it is `true`, the model refuses to use that estimated demand value as if it had been observed. Both API backends expose this flag as a boolean. The client also accepts a plain JSON array or `items`/`data` envelopes, but rejects responses with `has_more=true`; use the recent-history routes rather than the first page of the regular list. Records may be ordered or unordered. The script sorts timestamps and validates that the latest 168 hours have no gaps. All timestamps should use the same **naive local time convention** as the original dataset. Agree on a consistent convention with the group before deploying.
 
-With the API running and data loaded, use:
+With the API running and data loaded, run either command from the **repository root**, using the shared environment installed through the root README:
 
-```bash
-python scripts/predict.py --api-url "http://localhost:8000/mysql/records/recent?limit=200"
+```powershell
+& api/.venv/Scripts/python.exe -m Tifare_forecasting.scripts.predict --api-url "http://127.0.0.1:8000/mysql/records/recent?limit=200"
+& api/.venv/Scripts/python.exe -m Tifare_forecasting.scripts.predict --api-url "http://127.0.0.1:8000/mongo/records/recent?limit=200"
 ```
 
-This is an **illustrative URL**, not a confirmed route. The real URL depends on how Member 4 implements the API. If the API returns different JSON names, update the team contract consistently; do not silently rename columns during evaluation.
+These are implemented local routes and have been verified with both real databases. Each command selects one backend. The client loads the committed model and recomputes its features from the returned observations; it does not consume stored lag snapshots or write predictions back to the databases. `--mock` instead reads the root CSV directly and does not verify the database/API handoff.
 
 Expected JSON output has `forecast_for`, `predicted_PJME_MW` and `source` fields. In mock mode, the historical last timestamp is `2018-08-03 00:00:00` and the demonstration forecast is **32,562.82 MW for 2018-08-03 01:00:00**.
 
@@ -110,7 +111,7 @@ This checks:
 
 ## Limitations relevant to marking
 
-- The **shared cleaned CSV** includes `PJME_MW` and `temperature_c`. **Ask the group member who added temperature to document its source, station/region, collection process and timestamp alignment.** Do not label it observed weather data or use it for forecasting until its provenance and prediction-time availability are confirmed. The model itself currently uses demand history and calendar variables.
+- The **shared cleaned CSV** includes Open-Meteo archive temperature for Philadelphia (`temperature_2m`, requested latitude 39.95, longitude -75.16, 2002-01-01 through 2018-08-03, timezone `America/New_York`). The raw file is `data/raw/philadelphia_temperature.csv`. One city approximates weather across PJM East. The source is documented, but alignment with the original demand clock labels and prediction-time weather availability remain unresolved; the model uses demand history and calendar variables only.
 - Daylight-saving gaps remain ambiguous because timestamps have no explicit timezone. Although the shared CSV fills 30 missing hours by interpolation, the model masks those estimated values during training and prediction feature construction. Predictions immediately after those gaps may be rejected until 168 fully observed hours are available.
 - The model is a strong **historical one-step** benchmark, not evidence of multi-step or future-year forecasting quality.
 - The script expects the group-level `pjme_clean.csv` immediately above the `Tifare_forecasting` folder. The scripts cover Member 2 work only. Member 3 handles the actual databases; Member 4 provides the API; real-database verification and HTTP-to-model checks have passed.
