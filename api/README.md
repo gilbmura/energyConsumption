@@ -6,6 +6,8 @@ This folder owns the HTTP API, database adapters, tests and forecasting handoff.
 
 Follow the [root README](../README.md) for the combined environment, database loading and forecasting commands. Both the database tools and API read `api/.env` through `databases/config.py`.
 
+See the [local Docker operations guide](DOCKER_GUIDE.md) for database startup, ports, logs, shutdown, volume persistence and troubleshooting.
+
 ```powershell
 & api/.venv/Scripts/python.exe -m uvicorn api.app.main:app --host 127.0.0.1 --port 8000
 ```
