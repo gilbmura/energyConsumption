@@ -2,6 +2,20 @@
 
 The pulled repository now supplies Laura's schema and Tifare's saved model. Gilbert's API has been adapted to both. The shared contract lives in `databases/records.py`; configuration lives in `databases/config.py` and is re-exported by the API.
 
+## Integrated data flow
+
+```text
+Root pjme_clean.csv -> database loader -> MySQL / MongoDB
+                   -> API recent history -> forecasting client -> next-hour demand
+```
+
+1. David's preprocessing notebook writes `data/processed/pjme_clean.csv`. Follow the [dataset handoff](../README.md#dataset-handoff) to synchronize the accepted output to the root `pjme_clean.csv`, which is the loader's default input and the training/mock input.
+2. `databases.scripts.load_csv_to_databases` validates the complete CSV, provisions the canonical schema/indexes and upserts the four public fields into both databases by default. Each backend commits independently; the API does not mirror later edits between them.
+3. Gilbert's API reads the selected database through `/mysql/records/recent?limit=200` or `/mongo/records/recent?limit=200`. Each returns the latest observations oldest first in a `records` envelope, including `Datetime`, `PJME_MW`, `was_imputed`, `temperature_c` and the backend's `id`.
+4. `Tifare_forecasting.scripts.predict --api-url ...` fetches that history, requires 168 consecutive non-imputed hours ending at the latest timestamp, recomputes calendar/lag/rolling features, loads `Tifare_forecasting/models/pjme_forecast.joblib` and prints the next-hour forecast. The client does not write the forecast back to either database.
+
+Training and `--mock` read the root CSV directly. Only `--api-url` exercises the database-to-API forecasting handoff. The full setup is in the [root README](../README.md); Docker runs the databases and Uvicorn starts the API separately.
+
 ## Storage contract
 
 MySQL uses `pjme_energy.data_sources`, `time_dimensions` and `energy_readings`, provisioned from Laura's SQL file. API IDs map to `reading_id`. Creation resolves the seeded dataset/provider, or an explicit `MYSQL_SOURCE_ID`. Time-dimension and observation writes commit or roll back together. Updating a timestamp creates/reuses its new calendar row without moving the old parent key. Source and created-at metadata are retained; deletes retain dimension rows.
@@ -24,7 +38,9 @@ A final imputed observation now remains a missing value at the end of the time g
 
 Preserve the CSV's naive local clock labels. BSON stores them through its datetime representation without asserting that the original source was UTC. API responses have no timezone suffix. Confirm the original source timezone and daylight-saving policy before any conversion.
 
-Temperature's provenance and prediction-time availability are still unverified. The API stores and validates it, but the model does not use it as a predictor.
+The [root README](../README.md#dataset-and-sources) documents Philadelphia temperature from the Open-Meteo Historical Archive: `temperature_2m`, requested latitude 39.95, longitude -75.16, dates 2002-01-01 through 2018-08-03, and timezone `America/New_York`. The raw file is `data/raw/philadelphia_temperature.csv`; preprocessing joins it to demand by `Datetime`. Philadelphia is an approximation for the wider PJM East region.
+
+This documents the weather source and download configuration, but does not establish the original demand timezone or daylight-saving alignment of the joined clock labels. Prediction-time temperature availability also remains unverified. The loader and API retain and validate `temperature_c`; the saved forecasting model uses demand history and calendar features, not temperature.
 
 ## Completed live verification
 
@@ -38,6 +54,13 @@ Evidence lives in `api/evidence/integration-live-tests.xml`, `http-live.json`, `
 
 ## Reproducing the result
 
-Follow the root README to start the databases, load the CSV, run the live suite and start the API. The temporary verification API used localhost port 8765; normal setup uses port 8000. The persistent Docker volumes retain the imported dataset.
+Follow the [root README](../README.md) to install the shared `api/.venv` environment, configure `api/.env`, start the databases, validate/load the root CSV and start Uvicorn on port 8000. Leave Uvicorn running and use a second PowerShell terminal at the repository root:
 
-Temperature provenance and original timestamp timezone remain team documentation questions. The code deliberately excludes temperature from model features and preserves dataset clock labels. No commits or pushes were made automatically.
+```powershell
+& api/.venv/Scripts/python.exe -m Tifare_forecasting.scripts.predict --api-url "http://127.0.0.1:8000/mysql/records/recent?limit=200"
+& api/.venv/Scripts/python.exe -m Tifare_forecasting.scripts.predict --api-url "http://127.0.0.1:8000/mongo/records/recent?limit=200"
+```
+
+Each command forecasts from one database. With the full documented CSV and committed model, the previously verified result was 32,562.82 MW for 2018-08-03 01:00:00. Changes to the latest records or model can change this result. The temporary verification API used port 8765; normal setup uses port 8000. Persistent Docker volumes retain the imported dataset. See [API tests and evidence](README.md#tests-and-evidence) to reproduce the live checks.
+
+The remaining integration limitations are original demand timezone/daylight-saving alignment and prediction-time temperature availability. The code excludes temperature from model features and preserves dataset clock labels.
