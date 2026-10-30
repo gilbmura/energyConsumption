@@ -78,6 +78,35 @@ energyConsumption/
 
 The root `pjme_clean.csv` is the shared input used by the integrated loader and prediction pipeline. The files under `data/` document David's data preparation workflow.
 
+### Dataset handoff
+
+The two cleaned CSV files serve different stages of the current workflow:
+
+- `data/processed/pjme_clean.csv` is the output of `notebooks/01_eda_preprocessing.ipynb` and the input to the later analytical notebooks.
+- The root `pjme_clean.csv` is the shared input read by the database loader, forecasting scripts and related tests.
+
+Rerunning preprocessing updates only the copy under `data/processed/`. It does not automatically refresh the root copy, either database, or the saved forecasting model.
+
+After the team reviews and accepts a preprocessing change:
+
+1. Keep the four shared columns: `Datetime`, `PJME_MW`, `was_imputed` and `temperature_c`.
+2. From the repository root, synchronize the accepted output to the shared input:
+
+   ```powershell
+   Copy-Item -LiteralPath data/processed/pjme_clean.csv -Destination pjme_clean.csv
+   ```
+
+   This replaces the root copy. Run it only when the processed file is the version the team intends to use.
+3. Validate the shared input before reloading databases or retraining:
+
+   ```powershell
+   & api/.venv/Scripts/python.exe -m databases.scripts.load_csv_to_databases --validate-only
+   ```
+
+4. Reload the databases and rerun training and verification when the accepted data change requires updated results. Commit both CSV copies together when their contents change, so other members receive the same observations.
+
+Keep both files while the existing notebooks and application scripts use these separate paths. The feature table `data/processed/pjme_features.csv` is a separate exploratory output and must not replace either cleaned CSV.
+
 ## Task 1A: Data Exploration and Preprocessing
 
 We inspected the raw demand file and found:
