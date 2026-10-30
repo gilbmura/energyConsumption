@@ -124,21 +124,31 @@ For forecasting, interpolated demand values were masked to prevent information f
 
 ### Run the EDA Notebooks
 
-Install the required Python dependencies and open the notebooks:
+Complete [Environment Setup](#environment-setup) first, including registration of the **Python (PJME energy)** kernel. The notebooks, API, forecasting scripts and tests use the same `api/.venv` environment.
+
+From the repository root, launch Jupyter with that environment's Python:
 
 ```powershell
-python -m pip install -r requirements.txt
 cd notebooks
-jupyter notebook
+& ../api/.venv/Scripts/python.exe -m notebook
 ```
 
-Run the notebooks in order:
+Open each notebook and select **Python (PJME energy)** as its kernel. Run the notebooks in order:
 
 1. `01_eda_preprocessing.ipynb`
 2. `02_analytical_questions_part1.ipynb`
 3. `03_analytical_questions_part2.ipynb`
 
-The notebooks use relative paths, so launch Jupyter from inside the `notebooks` folder.
+The notebook working directory must be `notebooks/`, because paths such as `../data/raw` and `../data/processed` are relative to it. To check the selected Python environment, run this in a notebook cell:
+
+```python
+import sys
+print(sys.executable)
+```
+
+The path should end in `api\.venv\Scripts\python.exe`. If it points elsewhere, switch to the registered project kernel before running the analysis.
+
+When finished, shut down Jupyter with `Ctrl+C` in its terminal and confirm shutdown if prompted. Run `cd ..` to return to the repository root before using the loader, API, forecasting or test commands below. Follow [Dataset handoff](#dataset-handoff) if preprocessing changed the cleaned CSV.
 
 ## Task 1B: Analytical Questions
 
@@ -249,14 +259,35 @@ Swagger UI is available at `http://127.0.0.1:8000/docs` when the application is 
 
 ## Environment Setup
 
-From the project root on Windows PowerShell:
+Use one Python environment at `api/.venv` for the entire project: notebooks, database tools, API, forecasting and tests. The commands below are for Windows PowerShell and start in the repository root, the folder containing this README and `requirements.txt`.
 
-```powershell
-python -m venv api/.venv
-python -m pip --python api/.venv/Scripts/python.exe install -r requirements.txt
-```
+1. Check the Python interpreter used to create the environment. Python 3.13.2 was used for the recorded integration verification:
 
-The saved forecasting model uses scikit-learn 1.9.1, which is pinned in the requirements. The repository also includes `api/requirements-lock.txt` for additional environment reproducibility.
+   ```powershell
+   python --version
+   ```
+
+2. Create the environment on first setup. If `api/.venv` already exists for this checkout, reuse it and continue with dependency installation:
+
+   ```powershell
+   python -m venv api/.venv
+   ```
+
+3. Install the root requirements into that environment. They include the API, forecasting, testing and EDA notebook dependencies:
+
+   ```powershell
+   & api/.venv/Scripts/python.exe -m pip install -r requirements.txt
+   ```
+
+4. Register a clearly named Jupyter kernel using the same interpreter. `--sys-prefix` installs the kernel specification inside the project environment:
+
+   ```powershell
+   & api/.venv/Scripts/python.exe -m ipykernel install --sys-prefix --name pjme-energy --display-name "Python (PJME energy)"
+   ```
+
+Use the explicit `api/.venv/Scripts/python.exe` path for the loader, API, forecasting and test commands in this README. Activating the environment is not required. For notebook execution, follow [Run the EDA Notebooks](#run-the-eda-notebooks), which changes into `notebooks/` and uses `../api/.venv/Scripts/python.exe`.
+
+The saved forecasting model uses scikit-learn 1.9.1, which is pinned in the requirements. The repository also includes `api/requirements-lock.txt` as a record of the previously tested environment; the root `requirements.txt` is the installation entry point for the combined project.
 
 ### Start MySQL and MongoDB with Docker
 
