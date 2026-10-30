@@ -4,6 +4,12 @@ The canonical design uses MySQL database `pjme_energy` with three related tables
 
 The API now uses this schema directly. See the [root setup guide](../README.md) and [shared integration contract](../api/INTEGRATION.md).
 
+## Role in the integrated pipeline
+
+The flow is root `pjme_clean.csv` -> batch loader -> MySQL/MongoDB -> API recent history -> forecasting client. The loader reads the root CSV by default; preprocessing writes a separate copy under `data/processed/`. Follow the [dataset handoff](../README.md#dataset-handoff) before reloading changed data.
+
+After loading, start the API and use `/mysql/records/recent?limit=200` or `/mongo/records/recent?limit=200` for forecasting. The client requires 168 consecutive non-imputed hours and computes features from demand history; database lag snapshots are not used. See the [integration guide](../api/INTEGRATION.md#reproducing-the-result) for both forecast commands. The API selects one store per request and does not mirror CRUD edits between databases.
+
 ## Source files
 
 - `mysql/schema.sql`: the authoritative three-table DDL and initial data-source metadata.
@@ -54,4 +60,4 @@ For offline exploration only:
 
 This writes a separate `results/csv_preview_results.md`. The optional interactive `explore_databases.py` tool uses SQLite, not either live database, and additionally requires `rich`.
 
-The source and time alignment of temperature still need team documentation; numeric validation does not establish provenance.
+The [root README](../README.md#dataset-and-sources) documents Philadelphia temperature from the Open-Meteo Historical Archive: `temperature_2m`, requested latitude 39.95, longitude -75.16, dates 2002-01-01 through 2018-08-03, and timezone `America/New_York`. The raw file is `data/raw/philadelphia_temperature.csv`; preprocessing joins it to demand by `Datetime`. Philadelphia is an approximation for the wider PJM East region. The original demand timezone and daylight-saving alignment still need confirmation; numeric validation does not establish correct weather-to-demand alignment. Temperature is stored for analysis but is not used by the current forecasting model, and prediction-time availability remains unresolved.
